@@ -1,0 +1,137 @@
+pragma solidity ^0.8.0;
+
+contract PersonalizedLearning {
+
+    struct Course {
+        uint courseId;
+        string courseName;
+        mapping(address => bool) enrolledStudents;
+        mapping(address => uint) studentProgress;
+        mapping(address => bool) completed;
+        string contentUri; // Content delivery URI
+        address courseOwner; // Owner of the course (usually an instructor)
+    }
+    
+    struct Assessment {
+        uint assessmentId;
+        uint courseId;
+        string assessmentName;
+        mapping(address => uint) studentScores;
+        mapping(address => bool) submitted;
+    }
+    
+    struct User {
+        string username;
+        string passwordHash; // Basic authentication
+        mapping(uint => bool) completedCourses; // Courses completed by the user
+    }
+
+    mapping(uint => Course) public courses;
+    mapping(uint => Assessment) public assessments;
+    mapping(address => User) public users; // Basic authentication
+    uint public courseCount;
+    uint public assessmentCount;
+    uint public userCount; // Basic authentication
+    
+    event CourseCreated(uint indexed courseId, string courseName);
+    event AssessmentCreated(uint indexed assessmentId, uint indexed courseId, string assessmentName);
+    event Enrolled(address indexed student, uint indexed courseId);
+    event AssessmentSubmitted(address indexed student, uint indexed assessmentId, uint score);
+    event CourseCompleted(address indexed student, uint indexed courseId);
+    event CertificateGenerated(address indexed student, uint indexed courseId);
+    
+    constructor() {
+        // Creating a default admin user for authentication
+        users[msg.sender] = User("admin", "admin123");
+        userCount++;
+    }
+    
+    modifier onlyAdmin() {
+        require(keccak256(abi.encodePacked(users[msg.sender].passwordHash)) == keccak256(abi.encodePacked("admin123")), "Only admin can access this function");
+        _;
+    }
+
+    modifier onlyCourseOwner(uint _courseId) {
+        require(courses[_courseId].courseOwner == msg.sender, "Only the course owner can access this function");
+        _;
+    }
+
+    modifier onlyEnrolled(uint _courseId) {
+        require(courses[_courseId].enrolledStudents[msg.sender], "You must be enrolled in the course to perform this action");
+        _;
+    }
+
+    function createUser(string memory _username, string memory _passwordHash) public onlyAdmin {
+        users[msg.sender] = User(_username, _passwordHash);
+        userCount++;
+    }
+
+    function createCourse(string memory _courseName, string memory _contentUri) public onlyAdmin {
+        courseCount++;
+        courses[courseCount].courseOwner = msg.sender;  // Set the course owner to the admin or creator
+        courses[courseCount].courseName = _courseName;
+        courses[courseCount].contentUri = _contentUri;
+        emit CourseCreated(courseCount, _courseName);
+    }
+    
+    function enroll(uint _courseId) public onlyEnrolled(_courseId) {
+        require(_courseId <= courseCount && _courseId > 0, "Invalid course ID");
+        courses[_courseId].enrolledStudents[msg.sender] = true;
+        emit Enrolled(msg.sender, _courseId);
+    }
+
+    function createAssessment(uint _courseId, string memory _assessmentName) public onlyCourseOwner(_courseId) {
+        require(_courseId <= courseCount && _courseId > 0, "Invalid course ID");
+        assessmentCount++;
+        assessments[assessmentCount] = Assessment({
+            assessmentId: assessmentCount,
+            courseId: _courseId,
+            assessmentName: _assessmentName
+        });
+        emit AssessmentCreated(assessmentCount, _courseId, _assessmentName);
+    }
+
+    function submitAssessment(uint _assessmentId, uint _score) public onlyEnrolled(assessments[_assessmentId].courseId) {
+        require(_assessmentId <= assessmentCount && _assessmentId > 0, "Invalid assessment ID");
+        require(assessments[_assessmentId].submitted[msg.sender] == false, "Assessment already submitted");
+        assessments[_assessmentId].studentScores[msg.sender] = _score;
+        assessments[_assessmentId].submitted[msg.sender] = true;
+        uint courseId = assessments[_assessmentId].courseId;
+        courses[courseId].studentProgress[msg.sender] = _score;
+        emit AssessmentSubmitted(msg.sender, _assessmentId, _score);
+        
+        // Check if all assessments for the course are submitted
+        bool allSubmitted = true;
+        for (uint i = 1; i <= assessmentCount; i++) {
+            if (assessments[i].courseId == courseId && !assessments[i].submitted[msg.sender]) {
+                allSubmitted = false;
+                break;
+            }
+        }
+        
+        // Mark the course as completed if all assessments are submitted
+        if (allSubmitted) {
+            users[msg.sender].completedCourses[courseId] = true;
+            courses[courseId].completed[msg.sender] = true;
+            emit CourseCompleted(msg.sender, courseId);
+        }
+    }
+    
+    function generateCertificate(uint _courseId) public onlyEnrolled(_courseId) {
+        require(users[msg.sender].completedCourses[_courseId], "Course not completed");
+        emit CertificateGenerated(msg.sender, _courseId);
+        // Additional logic to generate and deliver the certificate
+    }
+
+    function getCourse(uint _courseId) public view returns (string memory, string memory) {
+        return (courses[_courseId].courseName, courses[_courseId].contentUri);
+    }
+
+    function getAssessment(uint _assessmentId) public view returns (string memory) {
+        return assessments[_assessmentId].assessmentName;
+    }
+
+    function getStudentProgress(uint _courseId, address _student) public view returns (uint) {
+        return courses[_courseId].studentProgress[_student];
+    }
+}
